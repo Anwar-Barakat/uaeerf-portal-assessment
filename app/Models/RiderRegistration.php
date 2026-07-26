@@ -6,8 +6,6 @@ use Illuminate\Database\Eloquent\Model;
 
 class RiderRegistration extends Model
 {
-    protected $connection = 'mssql';
-
     protected $fillable = [
         'user_id',
         'cart_id',

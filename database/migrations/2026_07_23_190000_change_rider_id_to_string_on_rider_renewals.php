@@ -1,25 +1,27 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
 
+/**
+ * Federation rider ids are alphanumeric (E0022141), so the column cannot be an
+ * integer. Previously issued as raw T-SQL against the 'mssql' connection, which
+ * left the default connection with the wrong type.
+ */
 return new class extends Migration
 {
     public function up(): void
     {
-        if (app()->runningUnitTests()) {
-            return;
-        }
-
-        DB::connection('mssql')->statement('ALTER TABLE rider_renewals ALTER COLUMN rider_id NVARCHAR(20) NOT NULL');
+        Schema::table('rider_renewals', function (Blueprint $table) {
+            $table->string('rider_id', 20)->change();
+        });
     }
 
     public function down(): void
     {
-        if (app()->runningUnitTests()) {
-            return;
-        }
-
-        DB::connection('mssql')->statement('ALTER TABLE rider_renewals ALTER COLUMN rider_id INT NOT NULL');
+        Schema::table('rider_renewals', function (Blueprint $table) {
+            $table->integer('rider_id')->change();
+        });
     }
 };

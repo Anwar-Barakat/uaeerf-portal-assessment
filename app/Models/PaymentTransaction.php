@@ -6,8 +6,6 @@ use Illuminate\Database\Eloquent\Model;
 
 class PaymentTransaction extends Model
 {
-    protected $connection = 'mssql';
-
     protected $fillable = [
         'tran_ref',
         'cart_id',

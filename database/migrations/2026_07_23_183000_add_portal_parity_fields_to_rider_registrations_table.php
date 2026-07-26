@@ -4,38 +4,44 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
+/** Default connection; guarded so it is safe to re-run. */
 return new class extends Migration
 {
     public function up(): void
     {
-        if (app()->runningUnitTests()) {
-            return;
-        }
+        Schema::table('rider_registrations', function (Blueprint $table) {
+            if (!Schema::hasColumn('rider_registrations', 'first_name')) {
+                $table->string('first_name')->nullable();
+            }
 
-        Schema::connection('mssql')->table('rider_registrations', function (Blueprint $table) {
-            $table->string('first_name')->nullable()->after('rider_name');
-            $table->string('last_name')->nullable()->after('first_name');
-            $table->string('visa_category')->nullable()->after('weight');
-            $table->string('eid')->nullable()->after('visa_category');
-            $table->boolean('register_season')->default(true)->after('eid');
-            $table->boolean('register_fei')->default(false)->after('register_season');
+            if (!Schema::hasColumn('rider_registrations', 'last_name')) {
+                $table->string('last_name')->nullable();
+            }
+
+            if (!Schema::hasColumn('rider_registrations', 'visa_category')) {
+                $table->string('visa_category')->nullable();
+            }
+
+            if (!Schema::hasColumn('rider_registrations', 'eid')) {
+                $table->string('eid')->nullable();
+            }
+
+            if (!Schema::hasColumn('rider_registrations', 'register_season')) {
+                $table->boolean('register_season')->default(true);
+            }
+
+            if (!Schema::hasColumn('rider_registrations', 'register_fei')) {
+                $table->boolean('register_fei')->default(false);
+            }
         });
     }
 
     public function down(): void
     {
-        if (app()->runningUnitTests()) {
-            return;
-        }
-
-        Schema::connection('mssql')->table('rider_registrations', function (Blueprint $table) {
+        Schema::table('rider_registrations', function (Blueprint $table) {
             $table->dropColumn([
-                'first_name',
-                'last_name',
-                'visa_category',
-                'eid',
-                'register_season',
-                'register_fei',
+                'first_name', 'last_name', 'visa_category',
+                'eid', 'register_season', 'register_fei',
             ]);
         });
     }
