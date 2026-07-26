@@ -55,7 +55,10 @@ services:
     restart: unless-stopped
     environment:
       ACCEPT_EULA: Y
-      SA_PASSWORD: "YourStrong@Passw0rd"
+      # From .env, which is not in the repository. No password is written here,
+      # even a local one - a file that ships with the project is the wrong place
+      # for a credential of any kind.
+      SA_PASSWORD: "${MSSQL_PASSWORD:?set MSSQL_PASSWORD in .env}"
       MSSQL_PID: Developer
     ports:
       - "1433:1433"
