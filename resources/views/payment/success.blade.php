@@ -10,9 +10,10 @@
             </svg>
         </div>
         <div class="space-y-1">
-            <h1 class="text-2xl font-bold tracking-tight">Payment Successful!</h1>
+            <h1 class="text-2xl font-bold tracking-tight">{{ $fulfilment['type'] }} Confirmed</h1>
             <p class="text-sm text-muted-foreground">
-                Your payment has been processed successfully. You will receive a confirmation email shortly.
+                Your payment went through and your {{ strtolower($fulfilment['type']) }} has been submitted to the
+                federation successfully. You will receive a confirmation email shortly.
             </p>
         </div>
     </div>
@@ -28,10 +29,18 @@
                 <dd class="font-semibold">{{ $transaction->currency }} {{ number_format($transaction->amount, 2) }}</dd>
             </div>
             <div class="flex items-center justify-between gap-4 py-2">
-                <dt class="text-muted-foreground">Status</dt>
+                <dt class="text-muted-foreground">Payment</dt>
                 <dd>
                     <span class="inline-flex items-center rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                        Confirmed
+                        Captured
+                    </span>
+                </dd>
+            </div>
+            <div class="flex items-center justify-between gap-4 py-2">
+                <dt class="text-muted-foreground">{{ $fulfilment['type'] }}</dt>
+                <dd>
+                    <span class="inline-flex items-center rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                        Completed
                     </span>
                 </dd>
             </div>
