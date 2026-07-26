@@ -2,6 +2,7 @@
 
 namespace App\Data;
 
+use App\Services\Soap\CommonsService;
 use Spatie\LaravelData\Data;
 
 class RiderRegistrationData extends Data
@@ -29,6 +30,11 @@ class RiderRegistrationData extends Data
         public int $category_id,
     ) {}
 
+    /**
+     * Every select is checked against the federation's own list, so a code the
+     * form never offered - or one it offered but disabled - cannot be posted
+     * straight to the web service.
+     */
     public static function rules(): array
     {
         return [
@@ -36,16 +42,16 @@ class RiderRegistrationData extends Data
             'last_name' => ['required', 'string', 'max:100'],
             'date_of_birth' => ['required', 'date', 'before_or_equal:' . now()->subYears(11)->toDateString()],
             'nationality' => ['nullable', 'string', 'max:3'],
-            'gender_id' => ['required', 'string', 'max:10'],
-            'nationality_id' => ['required', 'string', 'max:10'],
-            'city_id' => ['required', 'string', 'max:10'],
-            'country_id' => ['required', 'string', 'max:10'],
+            'gender_id' => ['required', 'string', 'max:10', ...CommonsService::inRule('genders')],
+            'nationality_id' => ['required', 'string', 'max:10', ...CommonsService::inRule('countries')],
+            'city_id' => ['required', 'string', 'max:10', ...CommonsService::inRule('cities')],
+            'country_id' => ['required', 'string', 'max:10', ...CommonsService::inRule('countries')],
             'email' => ['required', 'email', 'max:255'],
             'mobile' => ['required', 'string', 'min:7', 'max:20'],
             'address' => ['required', 'string', 'min:5', 'max:255'],
             'po_box' => ['required', 'string', 'max:20'],
             'weight' => ['required', 'numeric', 'min:20', 'max:200'],
-            'visa_category' => ['required', 'string', 'max:10'],
+            'visa_category' => ['required', 'string', 'max:10', ...CommonsService::inRule('visa_categories')],
             'eid' => [
                 'required',
                 'string',
@@ -60,8 +66,8 @@ class RiderRegistrationData extends Data
             'register_season' => ['boolean'],
             'register_fei' => ['boolean'],
             'passport_number' => ['nullable', 'string', 'max:50'],
-            'discipline_id' => ['required', 'integer', 'min:1'],
-            'category_id' => ['required', 'integer', 'min:1'],
+            'discipline_id' => ['required', 'integer', 'min:1', ...CommonsService::inRule('disciplines')],
+            'category_id' => ['required', 'integer', 'min:1', ...CommonsService::inRule('categories')],
         ];
     }
 

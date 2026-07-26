@@ -12,33 +12,24 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('history/renewals', [\App\Http\Controllers\HistoryController::class, 'renewals'])->name('history.renewals');
     Route::get('history/entries', [\App\Http\Controllers\HistoryController::class, 'entries'])->name('history.entries');
 
+    // Detail pages
+    Route::get('history/registrations/{id}', [\App\Http\Controllers\HistoryController::class, 'showRegistration'])
+        ->whereNumber('id')->name('history.registrations.show');
+    Route::get('history/renewals/{id}', [\App\Http\Controllers\HistoryController::class, 'showRenewal'])
+        ->whereNumber('id')->name('history.renewals.show');
+    Route::get('history/entries/{id}', [\App\Http\Controllers\HistoryController::class, 'showEntry'])
+        ->whereNumber('id')->name('history.entries.show');
+
     // Rider Registration & Renewal Pages
-    Route::get('rider/registration', function () {
-        $commons = app(\App\Services\Soap\CommonsService::class);
+    Route::get('rider/registration', [\App\Http\Controllers\RiderController::class, 'create'])
+        ->name('rider.registration');
 
-        return inertia('rider/registration', [
-            'disciplines' => $commons->getDisciplineList(),
-            'categories' => $commons->getCategoryList(),
-            'cities' => $commons->getCityList(),
-            'countries' => $commons->getCountryList(),
-            'genders' => $commons->getGenderList(),
-            'visaCategories' => $commons->getVisaCategoryList(),
-        ]);
-    })->name('rider.registration');
-
-    Route::get('rider/renewal', function () {
-        return inertia('rider/renewal', [
-            'seasons' => app(\App\Services\Soap\CommonsService::class)->getSeasonList(),
-        ]);
-    })->name('rider.renewal');
+    Route::get('rider/renewal', [\App\Http\Controllers\RiderController::class, 'renewalForm'])
+        ->name('rider.renewal');
 
     // Show Jumping Entry Page
-    Route::get('jumping/entry', function () {
-        return inertia('jumping/entry', [
-            'userRiders' => [],
-            'userHorses' => [],
-        ]);
-    })->name('jumping.entry');
+    Route::get('jumping/entry', [\App\Http\Controllers\ShowJumpingController::class, 'create'])
+        ->name('jumping.entry');
 
     // API Endpoints (rate limited: 10 requests per minute)
     Route::middleware('throttle:10,1')->group(function () {

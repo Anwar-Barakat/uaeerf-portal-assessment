@@ -32,14 +32,22 @@ class RiderRenewalRepository
             'tran_ref' => $tranRef,
             'soap_response' => $soapResponse,
             'completed_at' => now(),
+            // Clear any rejection from an earlier attempt: a completed record
+            // carrying an old error reads as a failure to anyone looking.
+            'error_message' => null,
         ]);
     }
 
-    public function markFailed(string $cartId, string $errorMessage): bool
+    /**
+     * The transaction reference is recorded on failure too - the payment was
+     * taken, so support needs it to trace or refund.
+     */
+    public function markFailed(string $cartId, string $errorMessage, ?string $tranRef = null): bool
     {
-        return $this->updateStatus($cartId, 'failed', [
+        return $this->updateStatus($cartId, 'failed', array_filter([
             'error_message' => $errorMessage,
-        ]);
+            'tran_ref' => $tranRef,
+        ]));
     }
 
     public function findByUserId(int $userId, int $limit = 10): array
@@ -51,8 +59,14 @@ class RiderRenewalRepository
             ->toArray();
     }
 
-    public function processWithTransaction(callable $callback)
+    /**
+     * @template TReturn
+     *
+     * @param  \Closure(\Illuminate\Database\Connection): TReturn  $callback
+     * @return TReturn
+     */
+    public function processWithTransaction(\Closure $callback)
     {
-        return DB::connection('mssql')->transaction($callback);
+        return DB::transaction($callback);
     }
 }

@@ -21,7 +21,7 @@ class RidersController extends Controller
         ]);
 
         try {
-            $riders = $this->ridersService->searchRiders($validated['q']);
+            $riders = $this->ridersService->searchByName($validated['q']);
 
             return response()->json([
                 'success' => true,
