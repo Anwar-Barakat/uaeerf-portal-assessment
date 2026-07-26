@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   app:
     build:
@@ -14,6 +12,28 @@ services:
       - uaeerf
     depends_on:
       - mssql
+
+  # Payment fulfilment runs on the queue (FulfilPaidOrder), so without a worker
+  # every paid registration sits unprocessed and the return page polls forever.
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: uaeerf_queue
+    restart: unless-stopped
+    working_dir: /var/www
+    # queue:listen, not queue:work: it reboots the framework per job, so code
+    # changes take effect immediately. queue:work holds the app in memory and
+    # silently runs the version it started with - which produced a renewal
+    # submitted with empty fields that the database row clearly contained.
+    # Use queue:work (and restart it on deploy) in production.
+    command: php artisan queue:listen --tries=5 --backoff=10 --sleep=3 --timeout=120
+    volumes:
+      - ./:/var/www
+    networks:
+      - uaeerf
+    depends_on:
+      - app
 
   nginx:
     image: nginx:alpine
