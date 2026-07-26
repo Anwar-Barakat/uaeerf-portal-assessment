@@ -111,9 +111,11 @@ sudo apt-get install msodbcsql18
 sudo pecl install sqlsrv pdo_sqlsrv
 ```
 
-**Full guide:** [`docs/MSSQL-DRIVER-INSTALL.md`](docs/MSSQL-DRIVER-INSTALL.md)
+**Helper script:** [`install-mssql-driver.sh`](install-mssql-driver.sh)
 
-> ⚠️ **Note:** Application works without MSSQL driver (SQLite fallback), but production deployment requires it.
+> ⚠️ **Note:** the app container already ships `sqlsrv`/`pdo_sqlsrv`. A default
+> host PHP does not, so artisan commands that touch the federation database must
+> run through `docker exec uaeerf_app`.
 
 ---
 
@@ -153,12 +155,15 @@ Edit `.env`:
 # Application
 APP_URL=http://localhost:8000
 
-# MSSQL Database
-MSSQL_HOST=[REDACTED]\DEVSQL,50441
-MSSQL_PORT=50441
-MSSQL_DATABASE=EEFRegistration
-MSSQL_USERNAME=[REDACTED]
-MSSQL_PASSWORD=[REDACTED]
+# Federation database (the live UAEERF data)
+# NOTE: the database is named EEF. EEFRegistration does not exist on this
+# server - connecting with that name fails with "Msg 4060: Cannot open database".
+# DEVSQL is reached over its static port, so the host carries no instance name.
+FEDERATION_DB_HOST=[REDACTED]
+FEDERATION_DB_PORT=50441
+FEDERATION_DB_DATABASE=EEF
+FEDERATION_DB_USERNAME=[REDACTED]
+FEDERATION_DB_PASSWORD="[REDACTED]"   # quote it: an unquoted # truncates the value
 
 # SOAP Authentication
 SOAP_AUTH_USERNAME=[REDACTED]
@@ -219,8 +224,8 @@ SOAP_JUMPING_CRITERIA_URL=http://[REDACTED]/webservices/ShowJumpingCriteria.asmx
 
 **Test Connection:**
 ```bash
-php test-soap-auth.php
-php test-soap-lists.php
+docker exec uaeerf_app php artisan tinker --execute="\
+  var_dump(app(App\Services\Soap\AuthenticationService::class)->authenticateAndCache());"
 ```
 
 ---
@@ -239,29 +244,26 @@ Used for:
 ### MSSQL (Production Database)
 
 Used for:
-- User profiles (`UserProfile`)
-- Show jumping entries (`ClassEntriesWeb`)
+- User profiles (`eefsys.WebUserProfile` - there is no `dbo.UserProfile`)
+- Show jumping entries (`dbo.ClassEntriesWeb`)
+- Horse and rider directories (`eefsys.HorseMaster`,
+  `eefsys.VIEW_Registrations_WithUserID`)
+
+Schema details and the discrepancies with the brief are documented in
+[`docs/FEDERATION-INTEGRATION.md`](docs/FEDERATION-INTEGRATION.md).
 
 **Connection String:**
 ```
-Server: [REDACTED]\DEVSQL,50441
-Database: EEFRegistration
+Server: [REDACTED] (port 50441; named instance DEVSQL, no instance name needed)
+Database: EEF          # not EEFRegistration - that database does not exist
 User: [REDACTED]
 Password: [REDACTED]
 ```
 
 **Test Connection:**
 ```bash
-php test-mssql.php
-```
-
-**Expected Output:**
-```
-✓ Connection successful
-=== Available Tables ===
-dbo.UserProfile
-dbo.ClassEntriesWeb
-...
+docker exec uaeerf_app php artisan tinker --execute="\
+  echo App\Models\UserProfile::count();"
 ```
 
 ---
@@ -276,9 +278,25 @@ php artisan serve
 
 # Terminal 2: Vite dev server
 npm run dev
+
+# Terminal 3: queue worker — REQUIRED for payments
+php artisan queue:work --tries=5 --backoff=10
 ```
 
 **Access:** http://localhost:8000
+
+> ⚠️ **The queue worker is not optional.** Payment fulfilment (submitting to the
+> federation after PayTabs confirms capture) runs as the `FulfilPaidOrder` job.
+> With no worker, every paid registration sits unprocessed in the `jobs` table
+> and the return page polls "Completing your rider registration…" until it gives
+> up. Under Docker this runs as the `queue` service (`docker compose up -d`).
+>
+> Recover anything stranded while the worker was down:
+>
+> ```bash
+> php artisan payments:retry-unfulfilled --dry-run   # list
+> php artisan payments:retry-unfulfilled             # re-dispatch
+> ```
 
 ### Production Build
 
@@ -346,7 +364,7 @@ GET|POST /api/payment/return      # User return URL (stateless, PRG)
 php artisan test
 ```
 
-**68 tests / 215 assertions** covering:
+**103 tests** covering:
 - Registration validation (phone, city, password, unique email, DOB rules)
 - Payment webhook security: HMAC signature (raw body), idempotency, declined vs authorised paths
 - SOAP success/rejection handling for registrations **and** renewals (mocked SOAP)
@@ -400,17 +418,22 @@ app(\App\Http\Controllers\PayTabsController::class)->webhook(
 );
 ```
 
-#### 4. SOAP Integration Tests
+#### 4. Live Integration Checks
+
+Run through the app container, which has the `sqlsrv` extension:
 
 ```bash
-# Test SOAP auth
-php test-soap-auth.php
+# SOAP authentication handshake
+docker exec uaeerf_app php artisan tinker --execute="\
+  var_dump(app(App\Services\Soap\AuthenticationService::class)->authenticateAndCache());"
 
-# Test common lists
-php test-soap-lists.php
+# Cached common lists
+docker exec uaeerf_app php artisan tinker --execute="\
+  echo count(app(App\Services\Soap\CommonsService::class)->getCityList());"
 
-# Test MSSQL connection
-php test-mssql.php
+# Federation database
+docker exec uaeerf_app php artisan tinker --execute="\
+  echo App\Models\UserProfile::count();"
 ```
 
 ### Automated Tests
@@ -547,7 +570,26 @@ extension=pdo_sqlsrv.so
 sudo systemctl restart php8.3-fpm
 ```
 
-**See:** [`docs/MSSQL-DRIVER-INSTALL.md`](docs/MSSQL-DRIVER-INSTALL.md)
+**See:** [`install-mssql-driver.sh`](install-mssql-driver.sh)
+
+### `SQLSTATE[HY000]: General error: 11 database disk image is malformed`
+
+The SQLite file is written by three processes at once — php-fpm in the app
+container, the queue worker container, and any host `php artisan` command —
+over a Docker bind mount. With the default rollback journal and no lock wait,
+concurrent writers corrupt it.
+
+Mitigated in `config/database.php` (WAL journal, 5s busy timeout) and by moving
+sessions and cache off the database driver, which removed most of the write
+traffic. If it recurs, check integrity first — it is often transient rather
+than fatal:
+
+```bash
+sqlite3 database/database.sqlite "PRAGMA integrity_check;"
+```
+
+For anything beyond local development, point `DB_CONNECTION` at a real database
+server rather than a bind-mounted SQLite file.
 
 ### SOAP Call Timeout
 
@@ -595,8 +637,8 @@ curl -X POST http://localhost:8000/api/admin/commons/clear-cache \
 ## 📚 Documentation
 
 - **Architecture:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- **Reconnaissance:** [`docs/TASK-0-RECONNAISSANCE.md`](docs/TASK-0-RECONNAISSANCE.md)
-- **MSSQL Setup:** [`docs/MSSQL-DRIVER-INSTALL.md`](docs/MSSQL-DRIVER-INSTALL.md)
+- **Federation integration (Task 0 findings):** [`docs/FEDERATION-INTEGRATION.md`](docs/FEDERATION-INTEGRATION.md)
+- **MSSQL driver setup:** [`install-mssql-driver.sh`](install-mssql-driver.sh)
 - **SOAP WSDLs:** [`docs/soap-wsdl/`](docs/soap-wsdl/)
 
 ---
@@ -639,16 +681,32 @@ curl -X POST http://localhost:8000/api/admin/commons/clear-cache \
 ✅ Portal-parity athlete registration form (visa category, Emirates ID, name split, weight, season/FEI options)  
 ✅ Rider renewal with live rider lookup (WSRiders SearchRiderList type-ahead)  
 ✅ Show jumping eligibility validation (real IsRiderEligible/IsHorseEligible parsing)  
-✅ 68 automated tests / 215 assertions  
+✅ 103 automated tests  
 
-### Known Environment Limitation
+### Known Environment Limitations
 
-⚠️ `Submit_PersonNewRegistration` on WS_TEST returns **"Invalid User ID" for every UserId** —
-verified with a fresh server-confirmed session against the assessment portal account
-(UserID 6422) and all PersonType values. All other field validations pass. This is
-server-side permissioning for the WS_TEST account; rejection messages are captured in
-`rider_registrations.error_message`. Raised with the UAEERF technical contact.
-See `docs/ARCHITECTURE.md` for full evidence.
+⚠️ **`Submit_PersonNewRegistration` accepts only whitelisted users.** The `UserId`
+must appear in the 53-account list returned by `Get_DEC_UserList`; every other
+value returns `Invalid User ID`, including ids that exist in
+`eefsys.WebUserProfile` and one with real rows in `eefsys.Registration`. Ruled
+out by direct probing: sending the local `users.id`, creating the profile row,
+setting `Stable_ID` + `IsStableAuthorized`, and forwarding the auth session
+cookie. The service validates against a user store these credentials cannot
+reach. **A self-registered account therefore cannot complete a rider
+registration**; rejection messages are captured in
+`rider_registrations.error_message` and the customer is shown a
+payment-received-but-incomplete page rather than a false success.
+
+⚠️ **`WSHorses.SearchHorseListV5` never responds** (>120 s on every filter
+tried) → horses read from `eefsys.HorseMaster` instead.
+
+⚠️ **`WSRiders` `SearchStable` returns nothing** for any value → riders read
+from `eefsys.VIEW_Registrations_WithUserID` instead.
+
+⚠️ **`WSCalendar.GetEventList`** throws on an empty `SearchDivision`, and every
+event reports an unset closing date, so open entries are determined by status.
+
+Full evidence in [`docs/FEDERATION-INTEGRATION.md`](docs/FEDERATION-INTEGRATION.md).
 
 Deferred by scope: profile-photo upload (`Submit_Document`).
 

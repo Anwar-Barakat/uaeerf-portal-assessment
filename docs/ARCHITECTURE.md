@@ -97,13 +97,18 @@ sequenceDiagram
     par Server-to-server webhook (IPN)
         PT->>L: POST /api/paytabs/webhook (Signature header)
         L->>L: HMAC-SHA256 verify of raw body (400 on mismatch)
-        L->>DB: INSERT payment_transactions (idempotent on tran_ref)
+        L->>L: Verify amount + currency against config/paytabs.php
+        L->>DB: firstOrCreate payment_transactions (atomic on tran_ref)
         alt authorised (response_status = A)
-            L->>WS: Auth handshake → Submit_PersonNewRegistration
+            L->>Q: dispatch FulfilPaidOrder
+            L-->>PT: 200 (acknowledges capture, always)
+            Q->>WS: Auth handshake → Submit_PersonNewRegistration
             alt SOAP accepted
-                L->>DB: registration → completed + tran_ref
+                Q->>DB: registration → completed + tran_ref
+                Q->>DB: transaction → processed = true
             else SOAP rejected
-                L->>DB: registration → failed + server messages
+                Q->>DB: registration → failed + tran_ref + messages
+                Q->>Q: retry (5 attempts, backoff) then log critical
             end
         else declined
             L->>DB: transaction → failed (registration untouched)
@@ -111,7 +116,7 @@ sequenceDiagram
     and Browser return
         PT->>U: POST /api/payment/return (stateless route)
         U->>L: 302 PRG redirect → GET with query params
-        L-->>U: success / failed / pending page (app-styled)
+        L-->>U: success / unfulfilled / failed / pending page
     end
 ```
 
@@ -120,11 +125,41 @@ sequenceDiagram
 - ✅ Webhook is the source of truth (return URL is display-only)
 - ✅ Database completion / SOAP submission ONLY after confirmed payment
 - ✅ Signature = HMAC-SHA256 of the **raw request body** with the server key
-- ✅ Idempotency: duplicate webhooks short-circuit on existing `tran_ref`
+- ✅ Amount and currency verified against the configured fee before fulfilment
+- ✅ Idempotency: `firstOrCreate` on `tran_ref`, atomic against concurrent
+  redeliveries
+- ✅ Fulfilment runs on the queue; the callback always answers 200 so PayTabs
+  never redelivers a payment already recorded
+- ✅ `processed` means *fulfilled*, not merely *paid*. A captured payment whose
+  federation submission failed stays unprocessed and is recoverable with
+  `php artisan payments:retry-unfulfilled`
 - ✅ `cart_id` prefix routes processing: `rider_reg_` / `rider_renewal_` / `jumping_`
 - ✅ Return route is **stateless** (API group) so PayTabs' cross-site POST cannot
-  rotate the authenticated session cookie
-- ✅ Transaction reference stored with every entry
+  rotate the authenticated session cookie. Because it cannot check the session,
+  it requires the `tranRef` alongside `cartId` before disclosing a transaction
+- ✅ Transaction reference stored with every entry, including failures
+
+**Operational requirement:** fulfilment is queued, so a worker must be running
+(`php artisan queue:work`, or the `queue` service under Docker). Without one,
+payments are captured and recorded but never submitted to the federation, and
+the return page polls indefinitely. `payments:retry-unfulfilled` recovers them.
+
+Retry semantics distinguish the two failure kinds: a `FederationRejectedException`
+(the service understood the request and refused it) fails the job immediately,
+because the identical request earns the identical refusal. Transport failures
+propagate and are retried with backoff.
+
+### Payment vs fulfilment
+
+These are separate facts and the UI reports them separately — a customer is
+never told they are registered when the federation rejected the submission.
+
+| Payment | Fulfilment | Page |
+|---|---|---|
+| success | completed | `payment.success` — "… Confirmed" |
+| success | failed | `payment.unfulfilled` — "Payment Received — … Incomplete" |
+| success | pending | `payment.pending` — bounded polling, 20 attempts |
+| failed | — | `payment.failed` |
 
 ---
 
@@ -199,26 +234,46 @@ GET|POST /api/payment/return    # User return URL (stateless, PRG)
 
 ## Testing
 
-68 automated tests (Pest) covering registration validation, payment webhook
-security (signature, idempotency, declined/authorised paths, SOAP
-success/rejection for registrations **and** renewals), payment return pages,
-rider search endpoint, and UserProfile-verified login. MSSQL is faked as an
-in-memory SQLite connection per test — the suite runs with no external
-dependencies.
+98 automated tests (Pest) covering registration validation, payment webhook
+security (signature, amount/currency verification, atomic idempotency,
+malformed and unknown-cart payloads, declined/authorised paths, SOAP
+success/rejection for registrations **and** renewals), payment/fulfilment
+return pages and their information-disclosure guard, unfulfilled-payment
+recovery, SOAP log redaction, rider search, and federation-verified login and
+registration. Both MSSQL connections are faked as in-memory SQLite per test —
+the suite runs with no external dependencies.
 
 ---
 
 ## Known Environment Limitation
 
-`Submit_PersonNewRegistration` on the WS_TEST environment returns
-**"Invalid User ID" for every UserId value** — verified with a fresh,
-server-side-confirmed session (`WSUserAuth` row present for our IP) against the
-assessment portal account `testings@uaeerf.ae` (UserID 6422), existing users,
-`0`, and all `PersonType` values. Every other field validation passes (name,
-DOB ≥ 11y, nationality/gender/city/country IDs, email, mobile, address, PO box,
-weight, EID format). The blocker is server-side permissioning for the WS_TEST
-account; the service's rejection messages are captured verbatim in
-`rider_registrations.error_message`. Raised with the UAEERF technical contact.
+`Submit_PersonNewRegistration` accepts a `UserId` only if it appears in the
+**53-account whitelist** returned by `Get_DEC_UserList`. Every other value —
+including ids present in `eefsys.WebUserProfile`, and id `6422` which has real
+rows in `eefsys.Registration` — returns `Invalid User ID`. All other field
+validation passes.
+
+Ruled out by direct probing: sending the local `users.id` (wrong, and fixed),
+creating the profile in `eefsys.WebUserProfile`, setting
+`Stable_ID` + `IsStableAuthorized = 1`, and propagating the
+`EEFWSAuthentication` session cookie. The service validates against a user
+store this login cannot reach, consistent with the brief's reference to
+`WEBSQL.EEFRegistration` — a different server from the `EEF` database the
+assessment credentials open.
+
+**A self-registered account therefore cannot complete a rider registration.**
+Demonstrating the flow end-to-end requires one of the whitelisted ids. The
+service's rejection messages are captured verbatim in
+`rider_registrations.error_message`, and the customer sees the
+payment-received-but-incomplete page rather than a false success.
+
+Two further environment faults, both worked around — see
+[FEDERATION-INTEGRATION.md](FEDERATION-INTEGRATION.md):
+
+- `WSHorses.SearchHorseListV5` never responds within 120 s → horses read from
+  `eefsys.HorseMaster`.
+- `WSRiders.SearchRiderList`'s `SearchStable` returns nothing for any value →
+  riders read from `eefsys.VIEW_Registrations_WithUserID`.
 
 Deferred by scope: profile-photo upload (`Submit_Document`).
 

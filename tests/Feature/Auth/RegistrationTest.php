@@ -1,10 +1,14 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Laravel\Fortify\Features;
 
 beforeEach(function () {
     $this->skipUnlessFortifyHas(Features::registration());
+
+    fakeFederationDatabase();
 });
 
 test('registration screen can be rendered', function () {
@@ -28,6 +32,87 @@ test('new users can register', function () {
     $response->assertRedirect(route('dashboard', absolute: false));
 
     expect(User::where('email', 'test@example.com')->exists())->toBeTrue();
+});
+
+test('registration writes the federation profile and links its user id', function () {
+    $this->post(route('register.store'), [
+        'name' => 'Travis Cardenas',
+        'email' => 'travis@example.com',
+        'phone' => '+971501234567',
+        'city' => 'Dubai',
+        'country' => 'AE',
+        'password' => 'Password123!',
+        'password_confirmation' => 'Password123!',
+    ]);
+
+    $profile = DB::connection('federation')->table('WebUserProfile')
+        ->where('Email', 'travis@example.com')
+        ->first();
+
+    expect($profile)->not->toBeNull()
+        ->and($profile->Fname)->toBe('Travis')
+        ->and($profile->Lname)->toBe('Cardenas')
+        ->and($profile->MobileNo)->toBe('+971501234567')
+        // Never store plain text, even though legacy portal rows do.
+        ->and($profile->Password)->not->toBe('Password123!');
+
+    expect(User::where('email', 'travis@example.com')->value('federation_user_id'))
+        ->toBe((int) $profile->UserId);
+});
+
+test('registration allocates sequential federation user ids', function () {
+    DB::connection('federation')->table('WebUserProfile')->insert([
+        'UserId' => 7155,
+        'Email' => 'existing@example.com',
+    ]);
+
+    $this->post(route('register.store'), [
+        'name' => 'Next User',
+        'email' => 'next@example.com',
+        'phone' => '+971501234567',
+        'city' => 'Dubai',
+        'password' => 'Password123!',
+        'password_confirmation' => 'Password123!',
+    ]);
+
+    expect(User::where('email', 'next@example.com')->value('federation_user_id'))->toBe(7156);
+});
+
+test('registration fails and creates no local user when the federation write fails', function () {
+    Schema::connection('federation')->drop('WebUserProfile');
+
+    $response = $this->from(route('register'))->post(route('register.store'), [
+        'name' => 'Orphan User',
+        'email' => 'orphan@example.com',
+        'phone' => '+971501234567',
+        'city' => 'Dubai',
+        'password' => 'Password123!',
+        'password_confirmation' => 'Password123!',
+    ]);
+
+    $response->assertSessionHasErrors('email');
+    $this->assertGuest();
+    expect(User::where('email', 'orphan@example.com')->exists())->toBeFalse();
+});
+
+test('registration is rejected when the portal already has the email', function () {
+    DB::connection('federation')->table('WebUserProfile')->insert([
+        'UserId' => 5000,
+        'Email' => 'portal@example.com',
+    ]);
+
+    $response = $this->from(route('register'))->post(route('register.store'), [
+        'name' => 'Portal User',
+        'email' => 'portal@example.com',
+        'phone' => '+971501234567',
+        'city' => 'Dubai',
+        'password' => 'Password123!',
+        'password_confirmation' => 'Password123!',
+    ]);
+
+    $response->assertSessionHasErrors('email');
+    $this->assertGuest();
+    expect(User::where('email', 'portal@example.com')->exists())->toBeFalse();
 });
 
 test('registration requires phone', function () {

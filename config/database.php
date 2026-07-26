@@ -38,9 +38,13 @@ return [
             'database' => env('DB_DATABASE', database_path('database.sqlite')),
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
-            'busy_timeout' => null,
-            'journal_mode' => null,
-            'synchronous' => null,
+            // The web container, the queue worker and host artisan commands all
+            // write this file. With the default rollback journal and no lock
+            // wait, concurrent writers produce "database disk image is
+            // malformed". WAL plus a busy timeout makes concurrent access safe.
+            'busy_timeout' => env('DB_BUSY_TIMEOUT', 5000),
+            'journal_mode' => env('DB_JOURNAL_MODE', 'WAL'),
+            'synchronous' => env('DB_SYNCHRONOUS', 'NORMAL'),
             'transaction_mode' => 'DEFERRED',
         ],
 
@@ -114,13 +118,38 @@ return [
             'trust_server_certificate' => env('DB_TRUST_SERVER_CERTIFICATE', true),
         ],
 
-        // UAEERF MSSQL (named instance)
+        // Live UAEERF federation database. Read/written through the federation
+        // tables only (eefsys.WebUserProfile, dbo.ClassEntriesWeb) - this
+        // application owns no schema here.
+        //
+        // The database is named EEF; there is no EEFRegistration database.
+        // DEVSQL is a named instance reached over its static port, so the host
+        // carries the hostname only and the instance name is omitted.
+        // Requires the sqlsrv PHP extension (present in the app container).
+        'federation' => [
+            'driver' => 'sqlsrv',
+            // No default host: the server is named in the environment, never
+            // in the repository.
+            'host' => env('FEDERATION_DB_HOST', ''),
+            'port' => env('FEDERATION_DB_PORT', '1433'),
+            'database' => env('FEDERATION_DB_DATABASE', 'EEF'),
+            'username' => env('FEDERATION_DB_USERNAME', ''),
+            'password' => env('FEDERATION_DB_PASSWORD', ''),
+            'charset' => 'utf8',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'encrypt' => env('FEDERATION_DB_ENCRYPT', 'no'),
+            'trust_server_certificate' => env('FEDERATION_DB_TRUST_SERVER_CERTIFICATE', true),
+        ],
+
+        // Staging tables owned by this application (payment_transactions,
+        // rider_registrations, rider_renewals, show_jumping_entries).
         'mssql' => [
             'driver' => 'sqlsrv',
             'url' => env('MSSQL_URL'),
             'host' => env('MSSQL_HOST', 'localhost'),
             'port' => env('MSSQL_PORT', '1433'),
-            'database' => env('MSSQL_DATABASE', 'EEFRegistration'),
+            'database' => env('MSSQL_DATABASE', 'EEF'),
             'username' => env('MSSQL_USERNAME', ''),
             'password' => env('MSSQL_PASSWORD', ''),
             'charset' => 'utf8',

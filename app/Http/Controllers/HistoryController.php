@@ -2,6 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\RiderRegistration;
+use App\Models\RiderRenewal;
+use App\Models\ShowJumpingEntry;
 use App\Repositories\DashboardRepository;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -46,6 +49,41 @@ class HistoryController extends Controller
         return Inertia::render('history/entries', [
             'entries' => $entries,
             'filters' => ['search' => $search],
+        ]);
+    }
+
+    /**
+     * Every show page is scoped to the signed-in user: these records carry
+     * personal data and payment references, so another user's id must 404
+     * rather than render.
+     */
+    public function showRegistration(Request $request, int $id): Response
+    {
+        $registration = RiderRegistration::where('user_id', $request->user()->id)
+            ->findOrFail($id);
+
+        return Inertia::render('history/registration-show', [
+            'registration' => $registration,
+        ]);
+    }
+
+    public function showRenewal(Request $request, int $id): Response
+    {
+        $renewal = RiderRenewal::where('user_id', $request->user()->id)
+            ->findOrFail($id);
+
+        return Inertia::render('history/renewal-show', [
+            'renewal' => $renewal,
+        ]);
+    }
+
+    public function showEntry(Request $request, int $id): Response
+    {
+        $entry = ShowJumpingEntry::where('user_id', $request->user()->id)
+            ->findOrFail($id);
+
+        return Inertia::render('history/entry-show', [
+            'entry' => $entry,
         ]);
     }
 }

@@ -4,26 +4,23 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
+/** Default connection; guarded so it is safe to re-run. */
 return new class extends Migration
 {
     public function up(): void
     {
-        if (app()->runningUnitTests()) {
+        if (Schema::hasColumn('rider_registrations', 'weight')) {
             return;
         }
 
-        Schema::connection('mssql')->table('rider_registrations', function (Blueprint $table) {
-            $table->string('weight')->nullable()->after('po_box');
+        Schema::table('rider_registrations', function (Blueprint $table) {
+            $table->string('weight')->nullable();
         });
     }
 
     public function down(): void
     {
-        if (app()->runningUnitTests()) {
-            return;
-        }
-
-        Schema::connection('mssql')->table('rider_registrations', function (Blueprint $table) {
+        Schema::table('rider_registrations', function (Blueprint $table) {
             $table->dropColumn('weight');
         });
     }

@@ -6,6 +6,7 @@ use Laravel\Fortify\Features;
 
 beforeEach(function () {
     $this->skipUnlessFortifyHas(Features::twoFactorAuthentication());
+    fakeFederationDatabase();
 });
 
 test('two factor challenge redirects to login when not authenticated', function () {
@@ -21,6 +22,7 @@ test('two factor challenge can be rendered', function () {
     ]);
 
     $user = User::factory()->withTwoFactor()->create();
+    fakeFederationProfile($user->email);
 
     $this->post(route('login'), [
         'email' => $user->email,

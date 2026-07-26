@@ -15,11 +15,39 @@ class PayTabsService
 
     public function __construct()
     {
-        $this->endpoint = config('services.paytabs.endpoint');
-        $this->profileId = config('services.paytabs.profile_id');
-        $this->serverKey = config('services.paytabs.server_key');
-        $this->callbackUrl = config('services.paytabs.callback_url');
-        $this->returnUrl = config('services.paytabs.return_url');
+        // Cast rather than declare string properties over raw env(): a missing
+        // key would otherwise be a TypeError at container-resolution time,
+        // surfacing as an unrelated 500 far from the real cause.
+        $this->endpoint = (string) config('services.paytabs.endpoint');
+        $this->profileId = (string) config('services.paytabs.profile_id');
+        $this->serverKey = (string) config('services.paytabs.server_key');
+        $this->callbackUrl = (string) config('services.paytabs.callback_url');
+        $this->returnUrl = (string) config('services.paytabs.return_url');
+    }
+
+    /**
+     * Fee for a cart type, e.g. 'rider_reg'. Shared by payment creation and
+     * webhook verification so the two can never disagree.
+     */
+    public static function feeFor(string $type): ?float
+    {
+        $fee = config("paytabs.fees.{$type}");
+
+        return $fee === null ? null : (float) $fee;
+    }
+
+    /**
+     * Derive the cart type from a cart id such as "rider_reg_9_6a65cbaf0a6f1".
+     */
+    public static function typeFromCartId(string $cartId): ?string
+    {
+        foreach (array_keys((array) config('paytabs.fees')) as $type) {
+            if (str_starts_with($cartId, $type . '_')) {
+                return $type;
+            }
+        }
+
+        return null;
     }
 
     public function createRiderRegistrationPayment(array $userData, string $cartId): array
@@ -27,8 +55,8 @@ class PayTabsService
         return $this->createPayment([
             'cart_id' => $cartId,
             'cart_description' => 'Rider Registration',
-            'cart_amount' => 100.00,
-            'cart_currency' => 'AED',
+            'cart_amount' => self::feeFor('rider_reg'),
+            'cart_currency' => config('paytabs.currency'),
             'customer_details' => [
                 'name' => $userData['name'],
                 'email' => $userData['email'],
@@ -47,8 +75,8 @@ class PayTabsService
         return $this->createPayment([
             'cart_id' => $cartId,
             'cart_description' => 'Rider Renewal',
-            'cart_amount' => 50.00,
-            'cart_currency' => 'AED',
+            'cart_amount' => self::feeFor('rider_renewal'),
+            'cart_currency' => config('paytabs.currency'),
             'customer_details' => [
                 'name' => $userData['name'],
                 'email' => $userData['email'],
@@ -70,8 +98,8 @@ class PayTabsService
                 'Show Jumping Entry - %s',
                 $entryData['event_name'] ?? 'Competition'
             ),
-            'cart_amount' => 150.00,
-            'cart_currency' => 'AED',
+            'cart_amount' => self::feeFor('jumping'),
+            'cart_currency' => config('paytabs.currency'),
             'customer_details' => [
                 'name' => $userData['name'],
                 'email' => $userData['email'],
@@ -105,10 +133,20 @@ class PayTabsService
             'amount' => $data['cart_amount'],
         ]);
 
+        // Bounded: without a timeout a stalled gateway holds the customer's
+        // request open until PHP's own limit kills it.
         $response = Http::withHeaders([
             'Authorization' => $this->serverKey,
             'Content-Type' => 'application/json',
-        ])->post($this->endpoint, $payload);
+        ])
+            ->connectTimeout((int) config('paytabs.connect_timeout'))
+            ->timeout((int) config('paytabs.timeout'))
+            ->retry(
+                (int) config('paytabs.retry_times'),
+                (int) config('paytabs.retry_sleep_ms'),
+                throw: false
+            )
+            ->post($this->endpoint, $payload);
 
         if (!$response->successful()) {
             Log::error('PayTabs payment creation failed', [
@@ -160,8 +198,13 @@ class PayTabsService
             && strtoupper($webhookData['payment_result']['response_status']) === 'A';
     }
 
+    /**
+     * uniqid() is derived from the clock and is therefore guessable. The cart
+     * id travels in URLs and identifies a transaction, so the suffix uses real
+     * randomness.
+     */
     public static function generateCartId(string $type, int $userId): string
     {
-        return sprintf('%s_%d_%s', $type, $userId, uniqid());
+        return sprintf('%s_%d_%s', $type, $userId, bin2hex(random_bytes(8)));
     }
 }

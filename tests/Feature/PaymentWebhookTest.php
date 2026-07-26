@@ -1,75 +1,15 @@
 <?php
 
+use App\Jobs\FulfilPaidOrder;
+use App\Repositories\PaymentTransactionRepository;
 use App\Services\PayTabsService;
 use App\Services\Soap\RegistrationsService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 const WEBHOOK_TEST_KEY = 'test-server-key';
 
 beforeEach(function () {
     config()->set('services.paytabs.server_key', WEBHOOK_TEST_KEY);
-    config()->set('database.connections.mssql', [
-        'driver' => 'sqlite',
-        'database' => ':memory:',
-        'prefix' => '',
-        'foreign_key_constraints' => false,
-    ]);
-
-    Schema::connection('mssql')->create('payment_transactions', function ($table) {
-        $table->id();
-        $table->string('tran_ref')->unique();
-        $table->string('cart_id')->unique();
-        $table->decimal('amount', 10, 2);
-        $table->string('currency', 3)->default('AED');
-        $table->string('status')->default('pending');
-        $table->string('response_code')->nullable();
-        $table->text('response_message')->nullable();
-        $table->json('webhook_payload')->nullable();
-        $table->boolean('processed')->default(false);
-        $table->timestamp('processed_at')->nullable();
-        $table->timestamps();
-    });
-
-    Schema::connection('mssql')->create('rider_registrations', function ($table) {
-        $table->id();
-        $table->unsignedBigInteger('user_id');
-        $table->string('cart_id')->unique();
-        $table->string('rider_name');
-        $table->date('date_of_birth');
-        $table->string('nationality', 3);
-        $table->string('gender_id')->nullable();
-        $table->string('nationality_id')->nullable();
-        $table->string('city_id')->nullable();
-        $table->string('country_id')->nullable();
-        $table->string('email')->nullable();
-        $table->string('mobile')->nullable();
-        $table->string('address')->nullable();
-        $table->string('po_box')->nullable();
-        $table->string('passport_number')->nullable();
-        $table->integer('discipline_id');
-        $table->integer('category_id');
-        $table->string('status')->default('pending_payment');
-        $table->string('tran_ref')->nullable();
-        $table->text('soap_response')->nullable();
-        $table->text('error_message')->nullable();
-        $table->timestamp('completed_at')->nullable();
-        $table->timestamps();
-    });
-
-    Schema::connection('mssql')->create('rider_renewals', function ($table) {
-        $table->id();
-        $table->unsignedBigInteger('user_id');
-        $table->string('cart_id')->unique();
-        $table->string('rider_id');
-        $table->integer('season_id');
-        $table->string('status')->default('pending_payment');
-        $table->string('tran_ref')->nullable();
-        $table->text('soap_response')->nullable();
-        $table->text('error_message')->nullable();
-        $table->timestamp('completed_at')->nullable();
-        $table->timestamps();
-    });
 });
 
 function webhookPayload(array $overrides = []): array
@@ -100,9 +40,22 @@ function postWebhook(array $payload, ?string $signature = null)
     ], $body);
 }
 
+/**
+ * The staging tables carry a real foreign key to users, so a pending record
+ * needs an owner.
+ */
+function ensureUser(int $id = 1): void
+{
+    if (!App\Models\User::find($id)) {
+        createLinkedUser($id);
+    }
+}
+
 function createPendingRegistration(string $cartId): void
 {
-    DB::connection('mssql')->table('rider_registrations')->insert([
+    ensureUser();
+
+    DB::table('rider_registrations')->insert([
         'user_id' => 1,
         'cart_id' => $cartId,
         'rider_name' => 'Test Rider',
@@ -114,6 +67,19 @@ function createPendingRegistration(string $cartId): void
         'status' => 'pending_payment',
         'created_at' => now(),
         'updated_at' => now(),
+    ]);
+}
+
+/**
+ * The federation identifies users by eefsys.WebUserProfile.UserId, carried on
+ * the local user as federation_user_id. Registration cannot be submitted
+ * without it.
+ */
+function createLinkedUser(int $id = 1, ?int $federationUserId = 7156): void
+{
+    App\Models\User::factory()->create([
+        'id' => $id,
+        'federation_user_id' => $federationUserId,
     ]);
 }
 
@@ -130,7 +96,9 @@ function mockSoapRegistration(bool $result = true): void
 
 function createPendingRenewal(string $cartId): void
 {
-    DB::connection('mssql')->table('rider_renewals')->insert([
+    ensureUser();
+
+    DB::table('rider_renewals')->insert([
         'user_id' => 1,
         'cart_id' => $cartId,
         'rider_id' => 'E0022141',
@@ -156,17 +124,18 @@ test('webhook rejects request with missing signature', function () {
     $response = postWebhook(webhookPayload(), '');
 
     $response->assertStatus(400);
-    expect(DB::connection('mssql')->table('payment_transactions')->count())->toBe(0);
+    expect(DB::table('payment_transactions')->count())->toBe(0);
 });
 
 test('webhook rejects request with invalid signature', function () {
     $response = postWebhook(webhookPayload(), 'invalid-signature');
 
     $response->assertStatus(400);
-    expect(DB::connection('mssql')->table('payment_transactions')->count())->toBe(0);
+    expect(DB::table('payment_transactions')->count())->toBe(0);
 });
 
 test('webhook with valid signature processes successful payment', function () {
+    createLinkedUser();
     mockSoapRegistration(true);
     createPendingRegistration('rider_reg_1_testcart');
 
@@ -174,19 +143,20 @@ test('webhook with valid signature processes successful payment', function () {
 
     $response->assertOk()->assertJson(['status' => 'success']);
 
-    $transaction = DB::connection('mssql')->table('payment_transactions')
+    $transaction = DB::table('payment_transactions')
         ->where('cart_id', 'rider_reg_1_testcart')->first();
     expect($transaction)->not->toBeNull();
     expect($transaction->status)->toBe('success');
     expect((bool) $transaction->processed)->toBeTrue();
 
-    $registration = DB::connection('mssql')->table('rider_registrations')
+    $registration = DB::table('rider_registrations')
         ->where('cart_id', 'rider_reg_1_testcart')->first();
     expect($registration->status)->toBe('completed');
     expect($registration->tran_ref)->toBe('TST0000000001');
 });
 
 test('webhook marks registration failed when soap rejects', function () {
+    createLinkedUser();
     mockSoapRegistration(false);
     createPendingRegistration('rider_reg_1_testcart');
 
@@ -194,10 +164,68 @@ test('webhook marks registration failed when soap rejects', function () {
 
     $response->assertOk();
 
-    $registration = DB::connection('mssql')->table('rider_registrations')
+    $registration = DB::table('rider_registrations')
         ->where('cart_id', 'rider_reg_1_testcart')->first();
     expect($registration->status)->toBe('failed');
     expect($registration->error_message)->toContain('Rejected by server');
+    // The payment was taken, so the reference must be traceable for a refund.
+    expect($registration->tran_ref)->toBe('TST0000000001');
+});
+
+test('captured payment is not marked processed when fulfilment fails', function () {
+    createLinkedUser();
+    mockSoapRegistration(false);
+    createPendingRegistration('rider_reg_1_testcart');
+
+    postWebhook(webhookPayload());
+
+    $transaction = DB::table('payment_transactions')
+        ->where('cart_id', 'rider_reg_1_testcart')->first();
+
+    expect($transaction->status)->toBe('success')
+        ->and((bool) $transaction->processed)->toBeFalse();
+});
+
+test('registration submits the federation user id, not the local users id', function () {
+    createLinkedUser(id: 1, federationUserId: 7156);
+    createPendingRegistration('rider_reg_1_testcart');
+
+    $captured = null;
+    $this->mock(RegistrationsService::class, function ($mock) use (&$captured) {
+        $mock->shouldReceive('submitPersonNewRegistration')
+            ->andReturnUsing(function (array $payload) use (&$captured) {
+                $captured = $payload;
+
+                return (object) [
+                    'Submit_PersonNewRegistrationResult' => true,
+                    'msg' => (object) ['string' => []],
+                ];
+            });
+    });
+
+    postWebhook(webhookPayload());
+
+    expect($captured['UserId'])->toBe(7156);
+});
+
+test('registration is not submitted when the user has no federation profile', function () {
+    createLinkedUser(id: 1, federationUserId: null);
+    createPendingRegistration('rider_reg_1_testcart');
+
+    $this->mock(RegistrationsService::class, function ($mock) {
+        $mock->shouldNotReceive('submitPersonNewRegistration');
+    });
+
+    postWebhook(webhookPayload());
+
+    $registration = DB::table('rider_registrations')
+        ->where('cart_id', 'rider_reg_1_testcart')->first();
+    expect($registration->status)->toBe('failed')
+        ->and($registration->error_message)->toContain('No federation profile');
+
+    $transaction = DB::table('payment_transactions')
+        ->where('cart_id', 'rider_reg_1_testcart')->first();
+    expect((bool) $transaction->processed)->toBeFalse();
 });
 
 test('webhook records declined payment without processing registration', function () {
@@ -215,11 +243,11 @@ test('webhook records declined payment without processing registration', functio
 
     $response->assertOk()->assertJson(['status' => 'failed']);
 
-    $transaction = DB::connection('mssql')->table('payment_transactions')
+    $transaction = DB::table('payment_transactions')
         ->where('cart_id', 'rider_reg_1_testcart')->first();
     expect($transaction->status)->toBe('failed');
 
-    $registration = DB::connection('mssql')->table('rider_registrations')
+    $registration = DB::table('rider_registrations')
         ->where('cart_id', 'rider_reg_1_testcart')->first();
     expect($registration->status)->toBe('pending_payment');
 });
@@ -236,7 +264,7 @@ test('webhook processes successful renewal payment', function () {
 
     $response->assertOk()->assertJson(['status' => 'success']);
 
-    $renewal = DB::connection('mssql')->table('rider_renewals')
+    $renewal = DB::table('rider_renewals')
         ->where('cart_id', 'rider_renewal_1_testcart')->first();
     expect($renewal->status)->toBe('completed');
     expect($renewal->tran_ref)->toBe('TST0000000002');
@@ -252,13 +280,14 @@ test('webhook marks renewal failed when soap rejects', function () {
         'cart_amount' => 50.00,
     ]))->assertOk();
 
-    $renewal = DB::connection('mssql')->table('rider_renewals')
+    $renewal = DB::table('rider_renewals')
         ->where('cart_id', 'rider_renewal_1_testcart')->first();
     expect($renewal->status)->toBe('failed');
     expect($renewal->error_message)->toContain('Renewal rejected by server');
 });
 
 test('duplicate webhook is skipped idempotently', function () {
+    createLinkedUser();
     mockSoapRegistration(true);
     createPendingRegistration('rider_reg_1_testcart');
 
@@ -266,7 +295,7 @@ test('duplicate webhook is skipped idempotently', function () {
     $response = postWebhook(webhookPayload());
 
     $response->assertOk()->assertJson(['status' => 'already_processed']);
-    expect(DB::connection('mssql')->table('payment_transactions')->count())->toBe(1);
+    expect(DB::table('payment_transactions')->count())->toBe(1);
 });
 
 test('return url post redirects to get with params', function () {
@@ -293,24 +322,73 @@ test('return url with unknown cart id shows pending view', function () {
     $response->assertOk()->assertViewIs('payment.pending');
 });
 
-test('return url shows success view for successful transaction', function () {
-    DB::connection('mssql')->table('payment_transactions')->insert([
+function createCapturedPayment(string $cartId = 'rider_reg_1_testcart'): void
+{
+    DB::table('payment_transactions')->insert([
         'tran_ref' => 'TST0000000001',
-        'cart_id' => 'rider_reg_1_testcart',
+        'cart_id' => $cartId,
         'amount' => 100.00,
         'currency' => 'AED',
         'status' => 'success',
         'created_at' => now(),
         'updated_at' => now(),
     ]);
+}
+
+test('return url shows success only when the registration completed', function () {
+    createCapturedPayment();
+    createPendingRegistration('rider_reg_1_testcart');
+    DB::table('rider_registrations')
+        ->where('cart_id', 'rider_reg_1_testcart')
+        ->update(['status' => 'completed']);
 
     $response = $this->get('/api/payment/return?cartId=rider_reg_1_testcart&tranRef=TST0000000001');
 
-    $response->assertOk()->assertViewIs('payment.success');
+    $response->assertOk()
+        ->assertViewIs('payment.success')
+        ->assertSee('Rider Registration Confirmed');
+});
+
+test('captured payment with failed fulfilment is never shown as success', function () {
+    createCapturedPayment();
+    createPendingRegistration('rider_reg_1_testcart');
+    DB::table('rider_registrations')
+        ->where('cart_id', 'rider_reg_1_testcart')
+        ->update(['status' => 'failed', 'error_message' => 'SOAP registration rejected: Invalid User ID']);
+
+    $response = $this->get('/api/payment/return?cartId=rider_reg_1_testcart&tranRef=TST0000000001');
+
+    $response->assertOk()
+        ->assertViewIs('payment.unfulfilled')
+        ->assertSee('Payment Received')
+        ->assertSee('Invalid User ID')
+        ->assertDontSee('Payment Successful');
+});
+
+test('captured payment awaiting fulfilment keeps polling', function () {
+    createCapturedPayment();
+    createPendingRegistration('rider_reg_1_testcart');
+
+    $response = $this->get('/api/payment/return?cartId=rider_reg_1_testcart&tranRef=TST0000000001');
+
+    $response->assertOk()
+        ->assertViewIs('payment.pending')
+        ->assertViewHas('shouldRefresh', true)
+        ->assertSee('Completing your rider registration');
+});
+
+test('return page stops polling after the attempt cap', function () {
+    $response = $this->get('/api/payment/return?cartId=unknown_cart&attempt=20');
+
+    $response->assertOk()
+        ->assertViewIs('payment.pending')
+        ->assertViewHas('shouldRefresh', false)
+        ->assertViewHas('refreshUrl', null)
+        ->assertSee('Still Processing');
 });
 
 test('return url shows failed view for failed transaction', function () {
-    DB::connection('mssql')->table('payment_transactions')->insert([
+    DB::table('payment_transactions')->insert([
         'tran_ref' => 'TST0000000001',
         'cart_id' => 'rider_reg_1_testcart',
         'amount' => 100.00,
@@ -323,6 +401,122 @@ test('return url shows failed view for failed transaction', function () {
     $response = $this->get('/api/payment/return?cartId=rider_reg_1_testcart&tranRef=TST0000000001');
 
     $response->assertOk()->assertViewIs('payment.failed');
+});
+
+test('a federation refusal is not retried', function () {
+    createLinkedUser();
+    mockSoapRegistration(false);
+    createPendingRegistration('rider_reg_1_testcart');
+
+    // Refusal is permanent: the same request earns the same answer, so the job
+    // must fail outright rather than spend its attempts.
+    $job = new FulfilPaidOrder('rider_reg_1_testcart', 'TST0000000001');
+    $job->handle(app(PaymentTransactionRepository::class));
+
+    expect($job->job?->hasFailed() ?? true)->toBeTrue();
+});
+
+test('a transport failure is retried rather than recorded as a rejection', function () {
+    createLinkedUser();
+    createPendingRegistration('rider_reg_1_testcart');
+
+    $this->mock(RegistrationsService::class, function ($mock) {
+        $mock->shouldReceive('submitPersonNewRegistration')
+            ->andThrow(new SoapFault('HTTP', 'Error Fetching http headers'));
+    });
+
+    expect(fn () => (new FulfilPaidOrder('rider_reg_1_testcart', 'TST0000000001'))
+        ->handle(app(PaymentTransactionRepository::class)))
+        ->toThrow(SoapFault::class);
+
+    // The record stays pending: a network blip is not a refusal.
+    $registration = DB::table('rider_registrations')
+        ->where('cart_id', 'rider_reg_1_testcart')->first();
+    expect($registration->status)->toBe('pending_payment');
+});
+
+test('webhook refuses to fulfil when the amount does not match the configured fee', function () {
+    createLinkedUser();
+    createPendingRegistration('rider_reg_1_testcart');
+
+    $this->mock(RegistrationsService::class, function ($mock) {
+        $mock->shouldNotReceive('submitPersonNewRegistration');
+    });
+
+    $response = postWebhook(webhookPayload(['cart_amount' => 1.00]));
+
+    $response->assertOk()->assertJson(['status' => 'amount_mismatch']);
+
+    $registration = DB::table('rider_registrations')
+        ->where('cart_id', 'rider_reg_1_testcart')->first();
+    expect($registration->status)->toBe('pending_payment');
+});
+
+test('webhook refuses to fulfil when the currency does not match', function () {
+    createLinkedUser();
+    createPendingRegistration('rider_reg_1_testcart');
+
+    $response = postWebhook(webhookPayload(['cart_currency' => 'USD']));
+
+    $response->assertOk()->assertJson(['status' => 'amount_mismatch']);
+});
+
+test('webhook acknowledges an unknown cart type without fulfilling it', function () {
+    $response = postWebhook(webhookPayload(['cart_id' => 'mystery_1_abc']));
+
+    $response->assertOk()->assertJson(['status' => 'ignored', 'reason' => 'unknown_cart_type']);
+    expect(DB::table('payment_transactions')->count())->toBe(0);
+});
+
+test('webhook acknowledges a malformed payload instead of erroring', function () {
+    // A 5xx makes PayTabs redeliver the same broken callback indefinitely.
+    $response = postWebhook(['cart_id' => 'rider_reg_1_testcart', 'tran_ref' => null]);
+
+    $response->assertOk()->assertJson(['status' => 'ignored', 'reason' => 'malformed_payload']);
+});
+
+test('concurrent duplicate webhooks create exactly one transaction', function () {
+    createLinkedUser();
+    mockSoapRegistration(true);
+    createPendingRegistration('rider_reg_1_testcart');
+
+    postWebhook(webhookPayload());
+    $second = postWebhook(webhookPayload());
+
+    $second->assertOk()->assertJson(['status' => 'already_processed']);
+    expect(DB::table('payment_transactions')->count())->toBe(1);
+});
+
+test('return page will not disclose a transaction without its reference', function () {
+    createCapturedPayment();
+    createPendingRegistration('rider_reg_1_testcart');
+    DB::table('rider_registrations')
+        ->where('cart_id', 'rider_reg_1_testcart')
+        ->update(['status' => 'completed']);
+
+    // Guessed cart id, no reference: must not reveal the transaction.
+    $response = $this->get('/api/payment/return?cartId=rider_reg_1_testcart');
+
+    $response->assertOk()
+        ->assertViewIs('payment.pending')
+        ->assertDontSee('TST0000000001');
+});
+
+test('return page will not disclose a transaction given a wrong reference', function () {
+    createCapturedPayment();
+
+    $response = $this->get('/api/payment/return?cartId=rider_reg_1_testcart&tranRef=TST9999999999');
+
+    $response->assertOk()->assertViewIs('payment.pending');
+});
+
+test('cart ids are not guessable from the clock', function () {
+    $a = PayTabsService::generateCartId('rider_reg', 1);
+    $b = PayTabsService::generateCartId('rider_reg', 1);
+
+    expect($a)->not->toBe($b)
+        ->and($a)->toStartWith('rider_reg_1_')
+        ->and(strlen(substr($a, strlen('rider_reg_1_'))))->toBe(16);
 });
 
 test('verify webhook signature accepts correct hmac of raw body', function () {

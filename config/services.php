@@ -47,6 +47,26 @@ return [
 
         'auth_username' => env('SOAP_AUTH_USERNAME'),
         'auth_password' => env('SOAP_AUTH_PASSWORD'),
+
+        // WSHorses.SearchHorseListV5 does not respond within 120s on the dev
+        // server, so horse lookups read eefsys.HorseMaster directly. Flip this
+        // on once the web service is usable.
+        'horses_via_webservice' => env('SOAP_HORSES_VIA_WEBSERVICE', false),
+
+        // WSDLs are static contracts; re-fetching one per client costs ~100ms.
+        'cache_wsdl' => env('SOAP_CACHE_WSDL', true),
+    ],
+
+    'federation' => [
+        // Login verifies against eefsys.WebUserProfile. When MSSQL is
+        // unreachable, logins fail closed unless this is explicitly enabled
+        // for local development.
+        'allow_local_auth_fallback' => env('FEDERATION_ALLOW_LOCAL_AUTH_FALLBACK', false),
+
+        // Schema-qualified names of the live federation tables. Overridable so
+        // tests can point them at an unqualified sqlite table.
+        'user_profile_table' => env('FEDERATION_USER_PROFILE_TABLE', 'eefsys.WebUserProfile'),
+        'class_entries_table' => env('FEDERATION_CLASS_ENTRIES_TABLE', 'dbo.ClassEntriesWeb'),
     ],
 
     'paytabs' => [

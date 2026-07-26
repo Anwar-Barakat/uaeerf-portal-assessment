@@ -47,35 +47,81 @@ class FortifyServiceProvider extends ServiceProvider
         Fortify::createUsersUsing(CreateNewUser::class);
 
         Fortify::authenticateUsing(function (Request $request) {
-            $user = User::where('email', $request->email)->first();
+            $email = (string) $request->input('email');
+            $password = (string) $request->input('password');
 
-            if (!$user || !Hash::check($request->password, $user->password)) {
+            try {
+                $profile = UserProfile::findByEmail($email);
+            } catch (\Throwable $e) {
+                Log::error('Federation profile lookup failed during login', [
+                    'email' => $email,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return $this->authenticateLocallyWhenDegraded($email, $password);
+            }
+
+            if (!$profile || !$profile->verifyPassword($password)) {
                 return null;
             }
 
-            try {
-                $profile = UserProfile::where('Email', $request->email)->first();
-
-                if (!$profile) {
-                    Log::warning('Login allowed but no MSSQL UserProfile found', [
-                        'email' => $request->email,
-                    ]);
-                } elseif (!Hash::check($request->password, $profile->Password)) {
-                    Log::warning('MSSQL UserProfile password mismatch on login', [
-                        'email' => $request->email,
-                    ]);
-
-                    return null;
-                }
-            } catch (\Exception $e) {
-                Log::error('MSSQL UserProfile verification unavailable during login', [
-                    'email' => $request->email,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-
-            return $user;
+            return $this->mirrorProfileToLocalUser($profile, $email, $password);
         });
+    }
+
+    /**
+     * eefsys.WebUserProfile is the account of record. The local users row is a
+     * mirror kept in step on each successful login, and is provisioned on first
+     * login so portal accounts that predate this application can sign in.
+     */
+    private function mirrorProfileToLocalUser(UserProfile $profile, string $email, string $password): User
+    {
+        $user = User::where('email', $email)->first() ?? new User(['email' => $email]);
+
+        $user->fill([
+            'name' => $profile->fullName() ?: ($user->name ?: $email),
+            'password' => $password,
+        ]);
+
+        // Set the federation id once and leave it alone. A portal UserId does
+        // not change, and overwriting it on every login silently undid any
+        // explicit link made with `federation:link` - the account would appear
+        // authorised until its next sign-in.
+        $profileUserId = (int) $profile->UserId;
+
+        if ($user->federation_user_id === null && $profileUserId > 0) {
+            $user->federation_user_id = $profileUserId;
+        }
+
+        // The federation portal owns email verification for these accounts.
+        $user->email_verified_at ??= now();
+        $user->save();
+
+        return $user;
+    }
+
+    /**
+     * Fallback for when MSSQL is unreachable. Disabled by default: without the
+     * federation profile there is nothing to verify against, so logins fail
+     * closed unless an operator opts in for local development.
+     */
+    private function authenticateLocallyWhenDegraded(string $email, string $password): ?User
+    {
+        if (!config('services.federation.allow_local_auth_fallback', false)) {
+            return null;
+        }
+
+        $user = User::where('email', $email)->first();
+
+        if (!$user || !Hash::check($password, $user->password)) {
+            return null;
+        }
+
+        Log::warning('Authenticated against local users table - federation profile unavailable', [
+            'email' => $email,
+        ]);
+
+        return $user;
     }
 
     /**

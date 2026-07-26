@@ -21,7 +21,7 @@ test('rider search returns mapped riders', function () {
     $this->actingAs(User::factory()->create());
 
     $this->mock(RidersService::class, function ($mock) {
-        $mock->shouldReceive('searchRiders')
+        $mock->shouldReceive('searchByName')
             ->once()
             ->with('ahmad')
             ->andReturn([
@@ -50,7 +50,7 @@ test('rider search handles soap failure gracefully', function () {
     $this->actingAs(User::factory()->create());
 
     $this->mock(RidersService::class, function ($mock) {
-        $mock->shouldReceive('searchRiders')
+        $mock->shouldReceive('searchByName')
             ->andThrow(new \RuntimeException('SOAP down'));
     });
 

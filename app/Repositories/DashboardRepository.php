@@ -36,7 +36,7 @@ class DashboardRepository
 
     private function countCompleted(string $table, int $userId): int
     {
-        return DB::connection('mssql')->table($table)
+        return DB::table($table)
             ->where('user_id', $userId)
             ->where('status', 'completed')
             ->count();
@@ -44,7 +44,7 @@ class DashboardRepository
 
     private function countCompletedBetween(string $table, int $userId, Carbon $start, Carbon $end): int
     {
-        return DB::connection('mssql')->table($table)
+        return DB::table($table)
             ->where('user_id', $userId)
             ->where('status', 'completed')
             ->whereBetween('created_at', [$start, $end])
@@ -53,7 +53,7 @@ class DashboardRepository
 
     public function paginateRegistrations(int $userId, ?string $search = null, int $perPage = 10)
     {
-        $query = DB::connection('mssql')->table('rider_registrations')
+        $query = DB::table('rider_registrations')
             ->where('user_id', $userId);
 
         if ($search) {
@@ -70,7 +70,7 @@ class DashboardRepository
 
     public function paginateRenewals(int $userId, ?string $search = null, int $perPage = 10)
     {
-        $query = DB::connection('mssql')->table('rider_renewals')
+        $query = DB::table('rider_renewals')
             ->where('user_id', $userId);
 
         if ($search) {
@@ -88,7 +88,7 @@ class DashboardRepository
 
     public function paginateEntries(int $userId, ?string $search = null, int $perPage = 10)
     {
-        $query = DB::connection('mssql')->table('show_jumping_entries')
+        $query = DB::table('show_jumping_entries')
             ->where('user_id', $userId);
 
         if ($search) {
