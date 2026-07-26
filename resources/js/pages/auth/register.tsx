@@ -72,32 +72,34 @@ export default function Register({ passwordRules }: Props) {
                                 <InputError message={errors.phone} />
                             </div>
 
-                            <div className="grid gap-2">
-                                <Label htmlFor="city">City</Label>
-                                <Input
-                                    id="city"
-                                    type="text"
-                                    required
-                                    tabIndex={4}
-                                    autoComplete="address-level2"
-                                    name="city"
-                                    placeholder="Dubai"
-                                />
-                                <InputError message={errors.city} />
-                            </div>
+                            <div className="grid gap-6 sm:grid-cols-2 sm:gap-4">
+                                <div className="grid gap-2">
+                                    <Label htmlFor="city">City</Label>
+                                    <Input
+                                        id="city"
+                                        type="text"
+                                        required
+                                        tabIndex={4}
+                                        autoComplete="address-level2"
+                                        name="city"
+                                        placeholder="Dubai"
+                                    />
+                                    <InputError message={errors.city} />
+                                </div>
 
-                            <div className="grid gap-2">
-                                <Label htmlFor="country">Country</Label>
-                                <Input
-                                    id="country"
-                                    type="text"
-                                    tabIndex={5}
-                                    autoComplete="country-name"
-                                    name="country"
-                                    placeholder="AE"
-                                    defaultValue="AE"
-                                />
-                                <InputError message={errors.country} />
+                                <div className="grid gap-2">
+                                    <Label htmlFor="country">Country</Label>
+                                    <Input
+                                        id="country"
+                                        type="text"
+                                        tabIndex={5}
+                                        autoComplete="country-name"
+                                        name="country"
+                                        placeholder="AE"
+                                        defaultValue="AE"
+                                    />
+                                    <InputError message={errors.country} />
+                                </div>
                             </div>
 
                             <div className="grid gap-2">
@@ -134,7 +136,7 @@ export default function Register({ passwordRules }: Props) {
 
                             <Button
                                 type="submit"
-                                className="mt-2 w-full"
+                                className="mt-2 h-11 w-full text-base shadow-md shadow-primary/20 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-primary/30"
                                 tabIndex={8}
                                 data-test="register-user-button"
                             >
