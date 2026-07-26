@@ -16,7 +16,10 @@ export default function AppSidebarLayout({
             <AppSidebar />
             <AppContent variant="sidebar" className="overflow-x-hidden">
                 <AppSidebarHeader breadcrumbs={breadcrumbs} />
-                <div key={url} className="flex flex-1 flex-col animate-in fade-in duration-300">
+                <div
+                    key={url}
+                    className="flex flex-1 animate-in flex-col duration-300 fade-in"
+                >
                     {children}
                 </div>
             </AppContent>

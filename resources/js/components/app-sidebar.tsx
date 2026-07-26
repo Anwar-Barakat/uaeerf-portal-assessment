@@ -1,11 +1,5 @@
 import { Link } from '@inertiajs/react';
-import {
-    LayoutGrid,
-    UserPlus,
-    RefreshCw,
-    Trophy,
-    Home,
-} from 'lucide-react';
+import { LayoutGrid, UserPlus, RefreshCw, Trophy, Home } from 'lucide-react';
 import AppLogo from '@/components/app-logo';
 import { NavMain } from '@/components/nav-main';
 import { NavUser } from '@/components/nav-user';
@@ -81,7 +75,7 @@ export function AppSidebar() {
                         <SidebarMenuButton
                             asChild
                             tooltip={{ children: 'UAEERF Website' }}
-                            className="group/nav h-9 gap-3 rounded-lg font-medium transition-colors hover:bg-primary/5 hover:text-foreground group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:p-1!"
+                            className="group/nav h-9 gap-3 rounded-lg font-medium transition-colors group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:p-1! hover:bg-primary/5 hover:text-foreground"
                         >
                             <Link href="/">
                                 <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-teal-500 text-white shadow-sm transition-transform group-hover/nav:scale-105">
