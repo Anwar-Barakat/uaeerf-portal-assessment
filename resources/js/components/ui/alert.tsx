@@ -9,8 +9,11 @@ const alertVariants = cva(
     variants: {
       variant: {
         default: "bg-background text-foreground",
+        // destructive-foreground is designed to sit on a destructive
+        // background. Used without one it renders white on white, which made
+        // the "Not Eligible" alert invisible. Tint the surface instead.
         destructive:
-          "text-destructive-foreground [&>svg]:text-current *:data-[slot=alert-description]:text-destructive-foreground/80",
+          "border-destructive/50 bg-destructive/10 text-destructive [&>svg]:text-current *:data-[slot=alert-description]:text-destructive/90",
       },
     },
     defaultVariants: {
