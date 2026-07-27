@@ -66,7 +66,10 @@ return [
         // Schema-qualified names of the live federation tables. Overridable so
         // tests can point them at an unqualified sqlite table.
         'user_profile_table' => env('FEDERATION_USER_PROFILE_TABLE', 'eefsys.WebUserProfile'),
-        'class_entries_table' => env('FEDERATION_CLASS_ENTRIES_TABLE', 'dbo.ClassEntriesWeb'),
+        // The table the federation's own system reads. The dbo copy of the
+        // same name is a near-empty scratch table - an entry written there is
+        // invisible to the federation.
+        'class_entries_table' => env('FEDERATION_CLASS_ENTRIES_TABLE', 'eefsys.ClassEntriesWeb'),
     ],
 
     'paytabs' => [

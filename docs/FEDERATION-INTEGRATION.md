@@ -10,7 +10,7 @@ is noted and the observed behaviour is what the code implements.
 |---|---|---|
 | Database | `[WEBSQL].[EEFRegistration]` | **`EEF`**, on the host in `FEDERATION_DB_HOST` (named instance, static port) |
 | User table | `dbo.UserProfile` | **`eefsys.WebUserProfile`** |
-| Entries table | `dbo.ClassEntriesWeb` | `dbo.ClassEntriesWeb` (confirmed) |
+| Entries table | `dbo.ClassEntriesWeb` | **`eefsys.ClassEntriesWeb`** - the table the federation reads (~136k rows). The `dbo` copy of the same name holds a dozen rows and is invisible to their system. |
 
 Connecting with database `EEFRegistration` fails outright:
 
@@ -45,10 +45,10 @@ This application never writes plain text. `UserProfile::verifyPassword()`
 accepts bcrypt *and* legacy plain text on read so existing portal accounts can
 sign in, but registration always hashes. Flagged rather than replicated.
 
-### `dbo.ClassEntriesWeb`
+### `eefsys.ClassEntriesWeb`
 
 ```
-EventCode int NOT NULL    ClassCode int NOT NULL     Code int NOT NULL (identity)
+EventCode int NOT NULL    ClassCode int NOT NULL     Code int NOT NULL (primary key, no identity)
 UserId int                RiderID varchar(50)        RiderStableID varchar(50)
 HorseID varchar(50)       StableID nchar(10)         TrainerID nchar(10)
 OwnerID nchar(10)         isFetched tinyint          Status nvarchar(50)
@@ -58,10 +58,17 @@ SeasonCode int            Fee money                  FeeStatus nvarchar(max)
 Reference varchar(50)
 ```
 
-The table exists in two schemas. `dbo` (9 rows) has `Code` as an identity
-column; `eefsys` (136,580 rows) has a composite key `(EventCode, ClassCode,
-Code)` with no identity, so writing there would mean allocating `Code` by hand.
-This application targets `dbo`.
+The table exists in two schemas, and **the schema matters**: `eefsys` holds
+136,580 entries and is what the federation's own system reads; `dbo` holds a
+dozen and is a scratch copy. An entry written to `dbo` is invisible to the
+federation, so this application targets `eefsys`.
+
+`PK_ClassEntriesWeb` is `Code` alone - unique, not an identity column, so it
+must be allocated on insert. `insertToClassEntriesWeb()` takes `MAX(Code) + 1`
+inside a transaction holding `UPDLOCK, HOLDLOCK`, so two concurrent entries
+cannot be given the same number.
+
+`FeeStatus` is the word `PAID`, not a flag - matching the rows already there.
 
 `RiderID` and `HorseID` are **varchar**, holding values like `E0007711` and
 `H000103` — never coerce them to integers. `Reference` carries the PayTabs

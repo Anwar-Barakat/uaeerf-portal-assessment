@@ -50,57 +50,66 @@ class ShowJumpingEntryRepository
     }
 
     /**
-     * Insert the paid entry into [EEF].[dbo].[ClassEntriesWeb].
+     * Insert the paid entry into [EEF].[eefsys].[ClassEntriesWeb].
      *
-     * Column names follow the live schema, not the assessment brief:
-     * EventCode/ClassCode (int), RiderID/HorseID (varchar - values look like
-     * E0007711 / H000103), Reference (varchar 50, holds the PayTabs tran_ref),
-     * dateSubmit, Fee (money). There is no currency or created-at column.
+     * This is the table the federation's own system reads - it holds ~136k
+     * entries. The dbo copy of the same name is a near-empty scratch table, and
+     * writing there means the entry exists nowhere the federation can see it.
      *
-     * dbo.ClassEntriesWeb is the target rather than eefsys.ClassEntriesWeb:
-     * Code is an identity column there, whereas the eefsys copy has a composite
-     * key with no identity and would require allocating Code by hand.
-     * Status uses the portal vocabulary (Accepted/Pending/Rejected/...).
+     * Code is the primary key and is not an identity column, so it has to be
+     * allocated here. It is taken as MAX(Code) + 1 inside a transaction holding
+     * an update lock, so two concurrent entries cannot be handed the same
+     * number.
+     *
+     * Column names and values follow the live schema and the conventions of the
+     * rows already in it: FeeStatus is the word "PAID", not a flag; RiderID and
+     * HorseID are varchar (E0007711 / H000103); Reference (varchar 50) holds
+     * the PayTabs transaction ref. There is no currency or created-at column.
      */
     public function insertToClassEntriesWeb(ShowJumpingEntry $entry, string $tranRef): void
     {
-        $table = config('services.federation.class_entries_table', 'dbo.ClassEntriesWeb');
+        $table = config('services.federation.class_entries_table', 'eefsys.ClassEntriesWeb');
+        $connection = DB::connection('federation');
 
-        // NOTE: this writes to the federation database, so it is outside the
-        // 'mssql' transaction that processWithTransaction() opens around the
-        // staging-table update. The two cannot be made atomic across servers.
-        DB::connection('federation')->table($table)->insert([
-            'EventCode' => (int) $entry->event_id,
-            'ClassCode' => (int) $entry->class_id,
-            'UserId' => $entry->user?->federation_user_id,
-            'RiderID' => (string) $entry->rider_id,
-            'HorseID' => (string) $entry->horse_id,
-            'SeasonCode' => $entry->season_code,
-            'Status' => 'Pending',
-            'Fee' => 150.00,
-            'FeeStatus' => '1',
-            'Reference' => $tranRef,
-            'dateSubmit' => now(),
-            'isFetched' => 0,
-            'IsLate' => 0,
-        ]);
+        // Writes to the federation database, so it cannot be made atomic with
+        // the local staging update - the two live on different servers.
+        $connection->transaction(function () use ($connection, $table, $entry, $tranRef) {
+            $code = (int) $connection
+                ->selectOne("SELECT ISNULL(MAX(Code), 0) + 1 AS NextCode FROM {$table} WITH (UPDLOCK, HOLDLOCK)")
+                ->NextCode;
+
+            $connection->table($table)->insert([
+                'Code' => $code,
+                'EventCode' => (int) $entry->event_id,
+                'ClassCode' => (int) $entry->class_id,
+                'UserId' => $entry->user?->federation_user_id,
+                'RiderID' => (string) $entry->rider_id,
+                'HorseID' => (string) $entry->horse_id,
+                'SeasonCode' => $entry->season_code,
+                // Awaiting the federation's own review; isFetched marks that
+                // their system has not pulled it in yet.
+                'Status' => 'Pending',
+                'isFetched' => 0,
+                'Fee' => 150.00,
+                'FeeStatus' => 'PAID',
+                'Reference' => $tranRef,
+                'dateSubmit' => now(),
+                'IsLate' => 0,
+                'IsPreRideLate' => 0,
+                'IsFEIValid' => 0,
+                'AcceptTerms' => 1,
+                'Review' => 0,
+            ]);
+        });
     }
 
-    /**
-     * Has an entry already been filed under this payment reference?
-     *
-     * The reference is the PayTabs transaction ref, unique to one payment, so a
-     * match means our own earlier insert landed. Checked before inserting: a
-     * retry - after the local write failed, say - must not enter the
-     * combination into the class twice on a single payment.
-     */
     public function existsForReference(string $reference): bool
     {
         if ($reference === '') {
             return false;
         }
 
-        $table = config('services.federation.class_entries_table', 'dbo.ClassEntriesWeb');
+        $table = config('services.federation.class_entries_table', 'eefsys.ClassEntriesWeb');
 
         return DB::connection('federation')->table($table)->where('Reference', $reference)->exists();
     }

@@ -119,7 +119,7 @@ return [
         ],
 
         // Live UAEERF federation database. Read/written through the federation
-        // tables only (eefsys.WebUserProfile, dbo.ClassEntriesWeb) - this
+        // tables only (eefsys.WebUserProfile, eefsys.ClassEntriesWeb) - this
         // application owns no schema here.
         //
         // The database is named EEF; there is no EEFRegistration database.
