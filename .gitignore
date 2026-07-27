@@ -28,3 +28,6 @@ yarn-error.log
 /.vscode
 /.zed
 CREDENTIALS.md
+
+# Internal Arabic documentation - not for the client
+docs/ar/

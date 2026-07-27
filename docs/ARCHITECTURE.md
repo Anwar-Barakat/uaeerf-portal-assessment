@@ -131,8 +131,7 @@ sequenceDiagram
 - ✅ Fulfilment runs on the queue; the callback always answers 200 so PayTabs
   never redelivers a payment already recorded
 - ✅ `processed` means *fulfilled*, not merely *paid*. A captured payment whose
-  federation submission failed stays unprocessed and is recoverable with
-  `php artisan payments:retry-unfulfilled`
+  federation submission failed stays unprocessed, so it stays findable
 - ✅ `cart_id` prefix routes processing: `rider_reg_` / `rider_renewal_` / `jumping_`
 - ✅ Return route is **stateless** (API group) so PayTabs' cross-site POST cannot
   rotate the authenticated session cookie. Because it cannot check the session,
@@ -142,7 +141,7 @@ sequenceDiagram
 **Operational requirement:** fulfilment is queued, so a worker must be running
 (`php artisan queue:work`, or the `queue` service under Docker). Without one,
 payments are captured and recorded but never submitted to the federation, and
-the return page polls indefinitely. `payments:retry-unfulfilled` recovers them.
+the return page polls indefinitely. Those payments keep `processed = 0`.
 
 Retry semantics distinguish the two failure kinds: a `FederationRejectedException`
 (the service understood the request and refused it) fails the job immediately,

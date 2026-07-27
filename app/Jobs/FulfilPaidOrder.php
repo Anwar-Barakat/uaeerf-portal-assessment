@@ -69,8 +69,10 @@ class FulfilPaidOrder implements ShouldQueue
 
     /**
      * Terminal failure: the customer has been charged and has nothing to show
-     * for it. 'processed' stays false so the transaction is picked up by
-     * `payments:retry-unfulfilled` and shows as needing review.
+     * for it. 'processed' stays false, so the transaction is identifiable as
+     * needing review:
+     *
+     *   SELECT * FROM payment_transactions WHERE status = 'success' AND processed = 0
      */
     public function failed(?\Throwable $e): void
     {

@@ -291,11 +291,12 @@ php artisan queue:work --tries=5 --backoff=10
 > and the return page polls "Completing your rider registration…" until it gives
 > up. Under Docker this runs as the `queue` service (`docker compose up -d`).
 >
-> Recover anything stranded while the worker was down:
+> Anything stranded while the worker was down keeps `processed = 0`, so it can
+> be listed and re-dispatched:
 >
-> ```bash
-> php artisan payments:retry-unfulfilled --dry-run   # list
-> php artisan payments:retry-unfulfilled             # re-dispatch
+> ```sql
+> SELECT cart_id, tran_ref, amount FROM payment_transactions
+> WHERE status = 'success' AND processed = 0;
 > ```
 
 ### Production Build
