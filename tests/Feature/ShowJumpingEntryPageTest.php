@@ -113,3 +113,40 @@ test('one unavailable federation list does not blank the page', function () {
             ->has('events', 0)
         );
 });
+
+/**
+ * An entry the federation refuses is reported with an 'eligibility' key, which
+ * names no field on the form. The page renders every error, so a refusal is
+ * visible rather than leaving the submit button looking dead.
+ */
+test('a refused entry is reported instead of failing silently', function () {
+    $user = signInWithStable();
+
+    test()->mock(App\Services\Soap\ShowJumpingCriteriaService::class, function ($m) {
+        $m->shouldReceive('validateRiderHorseCombination')->andReturn([
+            'riderEligible' => false,
+            'horseEligible' => true,
+            'riderDetails' => 'Rider is not registered for the current season',
+            'horseDetails' => 'YES',
+        ]);
+    });
+
+    // The guard must fire before any payment session exists.
+    test()->mock(App\Services\PayTabsService::class, function ($m) {
+        $m->shouldNotReceive('createShowJumpingPayment');
+    });
+
+    $response = $this->actingAs($user)
+        ->from(route('jumping.entry'))
+        ->post(route('jumping.entry.submit'), [
+            'rider_id' => 'S0000001',
+            'horse_id' => 'S0000052',
+            'event_id' => 4289,
+            'class_id' => 1,
+            'event_name' => 'Test Event',
+            'season_code' => 13,
+        ]);
+
+    $response->assertSessionHasErrors('eligibility');
+    expect(App\Models\ShowJumpingEntry::count())->toBe(0);
+});

@@ -564,6 +564,27 @@ export default function ShowJumpingEntry({
                             )}
                             </section>
 
+                            {/* The entry is refused with 'eligibility' and
+                                'payment' keys, and neither names a field on
+                                this form. Without this, those errors render
+                                nowhere and the submit button simply appears to
+                                do nothing. */}
+                            {Object.keys(errors).length > 0 && (
+                                <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4">
+                                    <p className="mb-2 text-sm font-semibold text-destructive">
+                                        Please fix the following before
+                                        continuing:
+                                    </p>
+                                    <ul className="list-inside list-disc space-y-1 text-sm text-destructive">
+                                        {Object.entries(errors).map(
+                                            ([key, message]) => (
+                                                <li key={key}>{message}</li>
+                                            ),
+                                        )}
+                                    </ul>
+                                </div>
+                            )}
+
                             <div className="rounded-lg border bg-muted/40 p-5">
                                 <div className="mb-3 flex items-center justify-between">
                                     <div>
