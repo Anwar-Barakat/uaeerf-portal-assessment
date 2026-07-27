@@ -11,7 +11,10 @@ RUN wget -qO /tmp/microsoft.asc https://packages.microsoft.com/keys/microsoft.as
     gpg --dearmor < /tmp/microsoft.asc > /usr/share/keyrings/microsoft-prod.gpg && \
     rm /tmp/microsoft.asc
 
-RUN echo "deb [arch=arm64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql-release.list
+# Architecture is detected rather than fixed: development happens on Apple
+# silicon (arm64) and servers are usually amd64, and a hardcoded value fails
+# the driver install on whichever one it was not written for.
+RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql-release.list
 
 RUN apt-get update && ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18
 

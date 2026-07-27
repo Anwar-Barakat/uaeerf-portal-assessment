@@ -1,0 +1,94 @@
+# Production stack.
+#
+# Differences from docker-compose.yml, and why:
+#
+#   - No mssql service. The application's own tables live in SQLite; the only
+#     SQL Server it needs is the federation's, which is remote.
+#   - queue:work, not queue:listen. listen reboots the framework per job so
+#     code changes apply immediately, which is useful locally and wasteful
+#     here. work must be restarted on deploy - see docs/DEPLOYMENT.md.
+#   - Caddy in front, which obtains and renews the HTTPS certificate on its
+#     own. PayTabs will not call back to a URL without a valid certificate.
+#   - The SQLite file and the storage directory are named volumes, so a
+#     rebuild does not take the payment records with it.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d --build
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: uaeerf_app
+    restart: unless-stopped
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+      - database:/var/www/database/sqlite
+      - storage:/var/www/storage/app
+    networks:
+      - uaeerf
+
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: uaeerf_queue
+    restart: unless-stopped
+    working_dir: /var/www
+    # Without this worker, payments are captured and never submitted to the
+    # federation. It is not optional.
+    command: php artisan queue:work --tries=5 --backoff=10 --sleep=3 --timeout=120 --max-time=3600
+    volumes:
+      - ./:/var/www
+      - database:/var/www/database/sqlite
+      - storage:/var/www/storage/app
+    networks:
+      - uaeerf
+    depends_on:
+      - app
+
+  nginx:
+    image: nginx:alpine
+    container_name: uaeerf_nginx
+    restart: unless-stopped
+    volumes:
+      - ./:/var/www
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d
+    networks:
+      - uaeerf
+    depends_on:
+      - app
+
+  # Terminates HTTPS and forwards to nginx. Certificates are requested from
+  # Let's Encrypt automatically on first start, so the domain must already
+  # point at this server before bringing the stack up.
+  caddy:
+    image: caddy:2-alpine
+    container_name: uaeerf_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Set in .env, e.g. APP_DOMAIN=uaeerf-anwar.duckdns.org
+      APP_DOMAIN: "${APP_DOMAIN:?set APP_DOMAIN in .env}"
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - uaeerf
+    depends_on:
+      - nginx
+
+networks:
+  uaeerf:
+    driver: bridge
+
+volumes:
+  database:
+  storage:
+  caddy_data:
+  caddy_config:
